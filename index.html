@@ -82,6 +82,24 @@
     <pre id="capLog">Nog geen opname.</pre>
   </details>
 
+  <!-- ============ CONTACT PROBEREN (gevorderd) ============ -->
+  <details>
+    <summary>🧪 Contact proberen (gevorderd — stuurt bytes)</summary>
+    <div class="card" style="margin-top:10px">
+      <p class="muted">Verbind eerst hierboven. Dit stuurt bekende scooter-<b>lees</b>verzoeken om te zien of de scooter antwoordt. Doe dit <b>alleen met de scooter op een standaard, wiel vrij van de grond</b>.</p>
+      <label style="display:flex;gap:8px;align-items:center;font-size:14px;margin:8px 0">
+        <input type="checkbox" id="safeStand" style="width:20px;height:20px">
+        De scooter staat op een standaard, wiel vrij van de grond.
+      </label>
+      <button id="btnProbe" class="ghost">🧪  Stuur test-verzoeken</button>
+      <div class="row" style="margin-top:4px">
+        <input id="hexInput" placeholder="handmatig hex, bv. 5A A5 01 3E 20 01 B2 01 EC FE"
+          style="flex:2;min-width:0;padding:12px;border-radius:10px;border:1px solid var(--line);background:#0c151d;color:var(--tx);font-size:13px">
+        <button id="btnSendHex" class="ghost" style="flex:1">Stuur</button>
+      </div>
+    </div>
+  </details>
+
   <!-- ============ UITGEBREIDE TEST (voor Jesse) ============ -->
   <details>
     <summary>🔧 Uitgebreide test (services uitlezen)</summary>
@@ -308,6 +326,51 @@ $("btnDlCap").onclick = ()=> download(capLog.join("\n"),
   "onemile-opname-"+new Date().toISOString().slice(0,16).replace(/[:T]/g,"-")+".txt");
 
 $("btnConnect").onclick = capConnect;
+
+/* -------- Contact proberen (actief, alleen-lezen verzoeken) -------- */
+// Bekende scooter-leesframes uit gedocumenteerde protocollen (scooterhacking).
+// Allemaal 'lees'-verzoeken: geen motor/rem/instelling-commando's.
+const PROBE_FRAMES = [
+  { label:"Ninebot lock-status", hex:"5A A5 01 3E 20 01 B2 01 EC FE" },
+  { label:"Ninebot unieke-ID",   hex:"5A A5 01 3E 20 01 56 02 47 FF" },
+  { label:"Xiaomi/M365 serienr", hex:"55 AA 04 20 01 10 0E BC FF" },
+  { label:"nieuwe regel",        hex:"0D 0A" },
+];
+function hexToBytes(s){ const m=(s||"").match(/[0-9a-fA-F]{2}/g)||[]; return m.map(x=>parseInt(x,16)); }
+async function writeRx(bytes){
+  if(!capRx) throw new Error("geen RX-kenmerk");
+  const buf = Uint8Array.from(bytes);
+  if(capRx.properties.writeWithoutResponse && capRx.writeValueWithoutResponse) await capRx.writeValueWithoutResponse(buf);
+  else await capRx.writeValue(buf);
+}
+$("btnProbe").onclick = async ()=>{
+  if(!capGatt || !capGatt.connected){ capSet("Verbind eerst met de scooter (knop bovenaan)."); return; }
+  if(!capRx){ capSet("Deze scooter heeft geen schrijf-kenmerk; kan geen verzoeken sturen."); return; }
+  if(!$("safeStand").checked){ capSet("⚠️ Vink eerst aan dat de scooter op een standaard staat, wiel vrij van de grond."); return; }
+  const btn=$("btnProbe"), label=btn.textContent; btn.disabled=true; btn.textContent="Bezig…";
+  const before=capCount;
+  capAdd("["+nowT()+"] ===== START test-verzoeken (alleen-lezen) =====");
+  for(let round=1; round<=2; round++){
+    for(const f of PROBE_FRAMES){
+      try{ await writeRx(hexToBytes(f.hex)); capAdd("["+nowT()+"] TX→ ["+f.label+"] "+f.hex); }
+      catch(e){ capAdd("["+nowT()+"] TX→ ["+f.label+"] MISLUKT: "+e.message); }
+      await sleep(900);
+    }
+  }
+  await sleep(1200);
+  const got=capCount-before;
+  capAdd("["+nowT()+"] ===== EINDE: "+got+" antwoord(en) van de scooter =====");
+  if(got>0) capSet("✅ De scooter ANTWOORDDE op een verzoek! Dit is de doorbraak. Stuur de opname naar Jesse.");
+  else capSet("Geen antwoord op de standaard-verzoeken — waarschijnlijk een eigen protocol. Stuur de opname toch naar Jesse; er staat nuttige info in.");
+  btn.disabled=false; btn.textContent=label;
+};
+$("btnSendHex").onclick = async ()=>{
+  if(!capGatt || !capGatt.connected){ capSet("Verbind eerst met de scooter."); return; }
+  const bytes=hexToBytes($("hexInput").value);
+  if(!bytes.length){ capSet("Voer hex-bytes in, bv. 5A A5 01 3E 20 01 B2 01 EC FE"); return; }
+  try{ await writeRx(bytes); capAdd("["+nowT()+"] TX→ [handmatig] "+bytes.map(b=>b.toString(16).padStart(2,"0").toUpperCase()).join(" ")); capSet("Verstuurd. Kijk of de teller oploopt."); }
+  catch(e){ capSet("Sturen mislukt: "+e.message); }
+};
 
 /* =======================================================================
    UITGEBREIDE TEST (services uitlezen) — voor Jesse
