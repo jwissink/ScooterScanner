@@ -1,0 +1,27 @@
+---
+# Handover-kopie. Dit bestand hoort thuis in de haven_ansible-repo als
+# app_vars/scooterscanner.yml (op de server: /opt/jesse_haven_ansible/app_vars/).
+# Het staat hier alleen zodat de inhoud met de app meereist.
+#
+# ScooterScanner: statische Web Bluetooth-diagnosepagina voor de Onemile scooter.
+# Geen database, geen mail -- alleen een kleine Node-container die index.html
+# serveert. Secret-vrij, dus veilig om te committen.
+#
+#   sudo ./deploy-docker.sh scooterscanner v1.0.0 prod
+#
+# Publieke repo -> https clone, geen deploy key nodig.
+repo: https://github.com/jwissink/ScooterScanner.git
+
+environments:
+
+  prod:
+    domain: "scooterscanner.wissinc.eu"
+    public_host: "scooterscanner.wissinc.eu"
+    # Uniek over de hele box. Bezet: 4100 testapp, 4101 codekompas,
+    # 4102 edumagix, 4103 edumagix-staging, 4104 codekompas-staging.
+    http_port: 4105
+
+    # Statische pagina; heel weinig geheugen nodig, maar wel begrensd zodat de
+    # OOM-killer nooit een andere app (of de mailserver) kiest.
+    memory_high: "96M"
+    memory_max: "128M"

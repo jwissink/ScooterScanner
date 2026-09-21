@@ -23,7 +23,22 @@ Web Bluetooth op Android werkt **alleen**:
 - op een **top-level https-pagina** met geldig TLS-certificaat (geen iframe, geen `file://`);
 - in **Chrome/Edge op Android** (niet in Safari/iOS).
 
-Serveer `index.html` dus gewoon statisch op de subdomein-root. Verder is geen configuratie nodig.
+## Deploy op Haven (ludolabsdev.eu-server)
+Draait als kleine Node-container (`server.js` serveert `index.html`) volgens de
+Haven-conventie: host-networking, bindt op `HOST`/`PORT`, Caddy ervoor met
+automatische TLS. Zie `E:\aistuff\HAVEN.md` voor de volledige serveruitleg.
+
+1. `app_vars/scooterscanner.yml` in `haven_ansible` plaatsen
+   (zie `deploy/app_vars.scooterscanner.yml`), poort **4105**, domein
+   `scooterscanner.wissinc.eu`, geen database.
+2. DNS: A-record `scooterscanner.wissinc.eu` → `31.70.122.126` (staat al goed).
+3. Op de server:
+   ```
+   cd /opt/jesse_haven_ansible
+   sudo ./deploy-docker.sh scooterscanner v1.0.0 prod
+   ```
+4. Controleren: `systemctl status scooterscanner_prod` en
+   `curl -s -o /dev/null -w '%{http_code}\n' https://scooterscanner.wissinc.eu/`.
 
 ## Bekend Onemile BLE-protocol (uit reverse-engineering v1.3.1)
 - Service `00007000-61B2-21F8-BCE3-94EEA697F98C`
