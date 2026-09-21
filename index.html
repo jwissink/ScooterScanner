@@ -30,7 +30,11 @@
   .big{font-size:19px;padding:18px}
   .status{font-size:15px;padding:12px;border-radius:10px;background:#101c27;
     border:1px solid var(--line);white-space:pre-wrap;word-break:break-word;min-height:24px}
-  .count{font-size:15px;font-weight:700;color:var(--accent);margin-top:8px}
+  .count{font-size:16px;font-weight:800;color:var(--accent);margin-top:10px;
+    padding:10px;border-radius:10px;background:#0c151d;border:1px solid var(--line);transition:background .15s,border-color .15s}
+  .count.flash{background:rgba(46,199,122,.28);border-color:var(--ok);color:#eafff3}
+  .live{display:inline-block;width:10px;height:10px;border-radius:50%;background:#3a4a59;margin-right:8px;vertical-align:middle}
+  .live.on{background:var(--ok);box-shadow:0 0 10px var(--ok)}
   pre{white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--tx);
     background:#0c151d;border:1px solid var(--line);border-radius:10px;padding:12px;margin:8px 0;max-height:300px;overflow:auto}
   .muted{color:var(--muted);font-size:13px}
@@ -185,16 +189,25 @@ function download(text, name){
    OPNAME (Nordic UART) — hoofdfunctie
    ======================================================================= */
 let capGatt=null, capDevice=null, capLog=[], capCount=0, capRx=null;
+let capNoDataTimer=null, capLastHex="", capFlashTimer=null;
 const capStatus=$("capStatus"), capCountEl=$("capCount"), capLogEl=$("capLog");
 
 function capSet(t){ capStatus.textContent=t; }
 function capAdd(line){
   capLog.push(line);
   if(capLog.length>4000){ capLog.splice(0,capLog.length-4000); } // begrens geheugen
-  // toon laatste ~40 regels
   capLogEl.textContent = capLog.slice(-40).join("\n");
 }
-function capUpdateCount(){ capCountEl.textContent = capCount ? (capCount+" berichten ontvangen van de scooter") : ""; }
+function capUpdateCount(){
+  if(!capCount){ capCountEl.innerHTML=""; return; }
+  capCountEl.innerHTML = '<span class="live on"></span>📥 '+capCount+
+    ' berichten binnen'+(capLastHex?('<br><span style="font-weight:600;color:var(--muted);font-size:13px">laatste: '+capLastHex+'</span>'):'');
+}
+function capFlash(){
+  capCountEl.classList.add("flash");
+  clearTimeout(capFlashTimer);
+  capFlashTimer=setTimeout(()=>capCountEl.classList.remove("flash"),160);
+}
 
 async function capConnect(){
   if(!navigator.bluetooth){ capSet("Deze browser ondersteunt geen Bluetooth. Gebruik Chrome op Android via https."); return; }
@@ -210,6 +223,7 @@ async function capConnect(){
   capAdd("");
 
   capDevice.addEventListener("gattserverdisconnected", ()=>{
+    clearTimeout(capNoDataTimer);
     capSet("⚠️ Verbinding verbroken. Zet de scooter aan en tik opnieuw op Verbinden.");
     capAdd("["+nowT()+"] --- verbinding verbroken ---");
   });
@@ -237,9 +251,21 @@ async function capConnect(){
     const tx = await svc.getCharacteristic(NUS_TX);
     await tx.startNotifications();
     tx.addEventListener("characteristicvaluechanged", ev=>{
-      const v=ev.target.value; capCount++; capUpdateCount();
+      const v=ev.target.value; capCount++; capLastHex=hex(v);
+      if(capCount===1){
+        clearTimeout(capNoDataTimer);
+        capSet("✅ Gelukt! Er komt data binnen van de scooter.\nBlijf de scooter bedienen en tik op “Ik doe nu iets…” vlak vóór elke handeling. Tik daarna op Verstuur naar Jesse.");
+      }
+      capFlash(); capUpdateCount();
       capAdd("["+nowT()+"] RX  "+hex(v)+"   | \""+ascii(v)+"\"");
     });
+    // Waakhond: als er na 10s nog niks binnen is, geruststellen + tip.
+    clearTimeout(capNoDataTimer);
+    capNoDataTimer = setTimeout(()=>{
+      if(capCount===0){
+        capSet("Verbonden ✅ — maar de scooter stuurt nog niks uit zichzelf.\nProbeer de scooter te bedienen: aanzetten, gas geven, mode wisselen. Zodra er iets binnenkomt zie je hieronder de teller oplopen. Blijft het leeg, laat het Jesse weten.");
+      }
+    }, 10000);
   }catch(e){ capAdd("["+nowT()+"] Kon meeluisteren niet starten: "+e.message); }
   // RX-kenmerk onthouden (voor later gericht sturen)
   try{ capRx = await svc.getCharacteristic(NUS_RX); }catch(_){ capRx=null; }
@@ -261,6 +287,7 @@ $("btnMarker").onclick = ()=>{
 };
 
 $("btnStop").onclick = ()=>{
+  clearTimeout(capNoDataTimer);
   try{ if(capGatt && capGatt.connected) capGatt.disconnect(); }catch(_){}
   capSet("Opname gestopt. Je kunt 'm nog versturen of bewaren.");
 };
