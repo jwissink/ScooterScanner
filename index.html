@@ -80,6 +80,14 @@
     <pre id="capLog">Nog geen opname.</pre>
   </details>
 
+  <div class="card">
+    <h2>🔍 Volledige scan</h2>
+    <p class="muted">Zoekt álle bekende Bluetooth-kanalen op de scooter (niet alleen Nordic UART) en stuurt de lijst naar Jesse. Handig als de gewone test niks oplevert.</p>
+    <button id="btnFullScan" class="ghost">🔍  Volledige scan + naar Jesse</button>
+    <div id="scanResult" class="status">Nog niet gestart.</div>
+    <details><summary>Scan bekijken</summary><pre id="scanLog">Nog geen scan.</pre></details>
+  </div>
+
   <details>
     <summary>Handmatig sturen (voor Jesse)</summary>
     <div class="card" style="margin-top:8px">
@@ -102,11 +110,20 @@ const APP_VER = "tool 3.0";
 const NUS    = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // schrijven (app -> scooter)
 const NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // melden   (scooter -> app)
-// extra services die we ook mogen benaderen (voor de apparaatkiezer)
-const OPTIONAL = [NUS,
+// Brede lijst bekende BLE/scooter-services. Web Bluetooth toont alleen kanalen
+// die hier vooraf in staan; compleet eigen UUID's blijven onzichtbaar (nRF Connect nodig).
+const KNOWN16 = ["1800","1801","1804","1805","1809","180a","180f","1812",
+  "fee0","fee1","fee7","fd00","fe59",
+  "ff00","ff01","ff02","ffe0","ffe1","ffe2","ffe5",
+  "fff0","fff1","fff2","fff3","fff4","fff5","fff6",
+  "ffb0","ffc0","ffd0","ffd5","ffa0",
+  "ae00","ae01","ae02","ae03","ae04","ae05"];
+const ALL_SERVICES = Array.from(new Set([
+  NUS, NUS_RX, NUS_TX,
   "00007000-61b2-21f8-bce3-94eea697f98c","0000aabb-0000-1000-8000-00805f9b34fb",
-  "0000180a-0000-1000-8000-00805f9b34fb","0000180f-0000-1000-8000-00805f9b34fb",
-  "0000ffe0-0000-1000-8000-00805f9b34fb","0000fff0-0000-1000-8000-00805f9b34fb"];
+  ...KNOWN16.map(x=>"0000"+x+"-0000-1000-8000-00805f9b34fb"),
+]));
+const OPTIONAL = ALL_SERVICES;
 
 // MiniRobot/Viron-frames (uit vr-unlock reverse-engineering). Alleen LEZEN hier.
 function miniFrame(headerB, cmd, type, addr, payload){
@@ -304,9 +321,42 @@ $("btnSendCap").onclick = async ()=>{
 };
 $("btnDlCap").onclick = ()=> download(capLog.join("\n"), "onemile-test-"+new Date().toISOString().slice(0,16).replace(/[:T]/g,"-")+".txt");
 
+function propsOf(c){ const p=c.properties,a=[]; if(p.read)a.push("lezen"); if(p.write)a.push("schrijven");
+  if(p.writeWithoutResponse)a.push("schrijven-snel"); if(p.notify)a.push("melden"); if(p.indicate)a.push("indiceren"); return a.join(", ")||"—"; }
+
+$("btnFullScan").onclick = async ()=>{
+  const setR=t=>$("scanResult").textContent=t;
+  if(!navigator.bluetooth){ setR("Deze browser ondersteunt geen Bluetooth."); return; }
+  let dev;
+  try{ setR("Kies je scooter in het lijstje…"); dev = await navigator.bluetooth.requestDevice({acceptAllDevices:true, optionalServices: ALL_SERVICES}); }
+  catch(e){ setR("Geen apparaat gekozen. ("+e.message+")"); return; }
+  const L=[]; const add=s=>L.push(s);
+  add("=== Volledige Bluetooth-scan ==="); add("Tijd: "+new Date().toLocaleString("nl-NL"));
+  add("Apparaat: "+(dev.name||"(geen naam)")+"   id="+dev.id); add("");
+  let gatt;
+  try{ setR("Verbinden…"); gatt=await connectRetry(dev,7,(n)=>setR("Verbinden — poging "+(n+1)+"…")); }
+  catch(e){ setR("Verbinden mislukt: "+e.message); return; }
+  setR("Services uitlezen…");
+  let svcs=[]; try{ svcs=await gatt.getPrimaryServices(); }catch(e){ add("getPrimaryServices fout: "+e.message); }
+  add("Gevonden services: "+svcs.length);
+  for(const s of svcs){
+    add(""); add("• Service "+s.uuid);
+    let chs=[]; try{ chs=await s.getCharacteristics(); }catch(e){ add("   (kenmerken onleesbaar: "+e.message+")"); continue; }
+    for(const c of chs){
+      add("   - "+c.uuid+"   ["+propsOf(c)+"]");
+      if(c.properties.read){ try{ const v=await c.readValue(); add("       = "+hex(v)+"  | \""+ascii(v)+"\""); }catch(_){ add("       (lezen mislukt)"); } }
+    }
+  }
+  try{ gatt.disconnect(); }catch(_){}
+  const text=L.join("\n"); $("scanLog").textContent=text;
+  setR("Scan klaar ("+svcs.length+" services). Versturen naar Jesse…");
+  try{ await sendReport(text, dev.name||"scan"); setR("✅ Volledige scan verstuurd naar Jesse ("+svcs.length+" services)."); }
+  catch(e){ setR("Scan klaar, automatisch mailen lukte niet ("+e.message+"). Ik open je mail-app…"); mailtoFallback(text); }
+};
+
 if(!navigator.bluetooth){
   $("compat").innerHTML="⚠️ Deze telefoon/browser ondersteunt geen Web Bluetooth. Gebruik <b>Chrome op Android</b> via een <b>https-link</b>.";
-  $("btnConnect").disabled=true; $("btnProbe").disabled=true;
+  $("btnConnect").disabled=true; $("btnProbe").disabled=true; $("btnFullScan").disabled=true;
 }
 </script>
 </body>
