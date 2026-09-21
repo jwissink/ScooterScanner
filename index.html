@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Onemile Scooter Diagnose</title>
+<style>
+  :root{
+    --bg:#0f1720; --card:#18232f; --line:#2a3a49; --tx:#eaf1f7; --muted:#9db0c2;
+    --accent:#3ba0ff; --ok:#2ec77a; --warn:#ffb020; --err:#ff5d5d; --btn:#2563eb;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--tx);
+    font-family:-apple-system,Roboto,"Segoe UI",system-ui,sans-serif;line-height:1.5}
+  .wrap{max-width:640px;margin:0 auto;padding:16px 16px 60px}
+  h1{font-size:22px;margin:8px 0 2px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:16px;margin:12px 0}
+  .step{display:flex;gap:10px;align-items:flex-start;margin:6px 0}
+  .num{flex:0 0 26px;height:26px;border-radius:50%;background:#22303d;color:var(--accent);
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+  button{font-size:17px;font-weight:700;border:0;border-radius:12px;padding:15px 18px;
+    width:100%;color:#fff;background:var(--btn);cursor:pointer;margin:8px 0}
+  button.ghost{background:#22303d;color:var(--tx);border:1px solid var(--line);font-weight:600}
+  button:disabled{opacity:.45}
+  .big{font-size:19px;padding:18px}
+  .status{font-size:15px;padding:12px;border-radius:10px;background:#101c27;
+    border:1px solid var(--line);white-space:pre-wrap;word-break:break-word;min-height:24px}
+  .verdict{font-size:17px;font-weight:800;padding:14px;border-radius:12px;text-align:center}
+  .v-ok{background:rgba(46,199,122,.15);color:var(--ok);border:1px solid var(--ok)}
+  .v-warn{background:rgba(255,176,32,.15);color:var(--warn);border:1px solid var(--warn)}
+  .v-err{background:rgba(255,93,93,.15);color:var(--err);border:1px solid var(--err)}
+  pre{white-space:pre-wrap;word-break:break-word;font-size:12.5px;color:var(--tx);
+    background:#0c151d;border:1px solid var(--line);border-radius:10px;padding:12px;margin:8px 0;max-height:340px;overflow:auto}
+  .muted{color:var(--muted);font-size:13px}
+  .row{display:flex;gap:8px}.row>*{flex:1}
+  a{color:var(--accent)}
+  details{margin-top:8px}summary{cursor:pointer;color:var(--muted);font-size:14px}
+  .hist{font-size:13px;color:var(--muted);border-top:1px dashed var(--line);padding-top:8px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🛴 Onemile Scooter Diagnose</h1>
+  <p class="sub">Test de Bluetooth-verbinding met de scooter en stuur het resultaat door.</p>
+
+  <div class="card">
+    <div class="step"><div class="num">1</div><div>Zet de <b>scooter aan</b> en houd de telefoon ernaast.</div></div>
+    <div class="step"><div class="num">2</div><div>Tik op <b>Start test</b> en kies in het lijstje het apparaat dat begint met <b>“YL”</b> (of, als dat er niet is, het apparaat dat op de scooter lijkt).</div></div>
+    <div class="step"><div class="num">3</div><div>Wacht tot het klaar is en tik op <b>Mail naar Jesse</b>.</div></div>
+  </div>
+
+  <button id="btnScan" class="big">▶️  Start test (zoek “YL…”)</button>
+  <button id="btnAny" class="ghost">Anders: kies handmatig uit álle apparaten</button>
+
+  <div class="card">
+    <div class="muted">Status</div>
+    <div id="status" class="status">Nog niet gestart.</div>
+    <div id="verdictBox"></div>
+  </div>
+
+  <div class="row">
+    <button id="btnMail" class="ghost" disabled>✉️  Mail naar Jesse</button>
+    <button id="btnDl" class="ghost" disabled>⬇️  Bewaar logbestand</button>
+  </div>
+
+  <details>
+    <summary>Details / rapport bekijken</summary>
+    <pre id="report">Nog geen rapport.</pre>
+    <div class="hist" id="hist"></div>
+    <button id="btnClear" class="ghost">Geschiedenis wissen</button>
+  </details>
+
+  <p class="muted" id="compat"></p>
+</div>
+
+<script>
+"use strict";
+const MAIL_TO = "jwissink@gmail.com";
+const APP_VER = "diag 1.0";
+
+// ---- Kandidaat-services die we mogen uitlezen (Web Bluetooth eist dit vooraf) ----
+const KNOWN_ONEMILE = "00007000-61b2-21f8-bce3-94eea697f98c";
+const SVC = [
+  { uuid: KNOWN_ONEMILE, name: "Onemile besturing (bekend protocol)" },
+  { uuid: "0000aabb-0000-1000-8000-00805f9b34fb", name: "Onemile aux (AABB)" },
+  { uuid: "0000180a-0000-1000-8000-00805f9b34fb", name: "Apparaat-info" },
+  { uuid: "0000180f-0000-1000-8000-00805f9b34fb", name: "Batterij" },
+  { uuid: "6e400001-b5a3-f393-e0a9-e50e24dcca9e", name: "Nordic UART (seriële data)" },
+  { uuid: "0000ffe0-0000-1000-8000-00805f9b34fb", name: "Seriële BLE (FFE0)" },
+  { uuid: "0000fff0-0000-1000-8000-00805f9b34fb", name: "Seriële BLE (FFF0)" },
+  { uuid: "0000ffb0-0000-1000-8000-00805f9b34fb", name: "Seriële BLE (FFB0)" },
+];
+const ALL_UUIDS = SVC.map(s => s.uuid);
+const CHAR_ONEMILE_WRITE  = "00007001-61b2-21f8-bce3-94eea697f98c";
+const CHAR_ONEMILE_NOTIFY = "00007002-61b2-21f8-bce3-94eea697f98c";
+// Standaard "Apparaat-info" kenmerken -> leveren vaak model + firmware
+const DIS = {
+  "00002a29-0000-1000-8000-00805f9b34fb":"Fabrikant",
+  "00002a24-0000-1000-8000-00805f9b34fb":"Modelnummer",
+  "00002a25-0000-1000-8000-00805f9b34fb":"Serienummer",
+  "00002a26-0000-1000-8000-00805f9b34fb":"Firmware",
+  "00002a27-0000-1000-8000-00805f9b34fb":"Hardware",
+  "00002a28-0000-1000-8000-00805f9b34fb":"Software",
+};
+
+const $ = id => document.getElementById(id);
+const statusEl = $("status"), reportEl = $("report"), verdictBox = $("verdictBox");
+let lastReport = "";
+
+function setStatus(t){ statusEl.textContent = t; }
+function props(c){ const p=c.properties, a=[];
+  if(p.read)a.push("lezen"); if(p.write)a.push("schrijven");
+  if(p.writeWithoutResponse)a.push("schrijven-snel"); if(p.notify)a.push("melden");
+  if(p.indicate)a.push("indiceren"); return a.join(", ")||"—"; }
+function hex(dv){ let s=""; for(let i=0;i<dv.byteLength;i++) s+=dv.getUint8(i).toString(16).padStart(2,"0").toUpperCase(); return s; }
+function ascii(dv){ let s=""; for(let i=0;i<dv.byteLength;i++){const b=dv.getUint8(i); s+=(b>=32&&b<127)?String.fromCharCode(b):"."; } return s; }
+const short = u => { const m=/^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$/.exec(u); return m?("0x"+m[1].toUpperCase()):u; };
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+function setVerdict(kind,text){
+  const cls = kind==="ok"?"v-ok":kind==="warn"?"v-warn":"v-err";
+  verdictBox.innerHTML = `<div class="verdict ${cls}">${text}</div>`;
+}
+
+if(!navigator.bluetooth){
+  $("compat").innerHTML = "⚠️ Deze telefoon/browser ondersteunt geen Web Bluetooth. Gebruik <b>Chrome op Android</b> en open deze pagina via een <b>https-link</b> (niet als los bestand).";
+  $("btnScan").disabled = true; $("btnAny").disabled = true;
+}
+
+async function run(acceptAll){
+  verdictBox.innerHTML=""; $("btnMail").disabled=true; $("btnDl").disabled=true;
+  const log = [];
+  const L = s => { log.push(s); };
+  const now = new Date();
+  L("=== Onemile Scooter — diagnoserapport ===");
+  L("Tijd: " + now.toLocaleString("nl-NL"));
+  L("App: " + APP_VER + "   Browser: " + navigator.userAgent);
+  L("");
+
+  let device;
+  try{
+    setStatus("Bluetooth-venster geopend… kies de scooter in het lijstje.");
+    const opts = acceptAll
+      ? { acceptAllDevices:true, optionalServices: ALL_UUIDS }
+      : { filters:[{namePrefix:"YL"}], optionalServices: ALL_UUIDS };
+    device = await navigator.bluetooth.requestDevice(opts);
+  }catch(e){
+    setStatus("Geen apparaat gekozen of geweigerd.\n(" + e.message + ")");
+    if(!acceptAll) setStatus("Geen ‘YL…’ apparaat gekozen.\nTip: probeer de knop ‘kies handmatig uit álle apparaten’.\n(" + e.message + ")");
+    return;
+  }
+
+  L("Gekozen apparaat:");
+  L("  Naam : " + (device.name || "(geen naam)"));
+  L("  Id   : " + device.id);
+  L("  (MAC-adres is via de browser niet zichtbaar — dat is normaal.)");
+  L("");
+
+  let gatt, foundKnown=false, haveWrite=false, haveNotify=false, disText=[], battTxt="";
+  const notifications = [];
+  try{
+    setStatus("Verbinden met " + (device.name||"apparaat") + "…");
+    gatt = await device.gatt.connect();
+    L("Verbinding: GELUKT (geen pincode/koppeling nodig).");
+  }catch(e){
+    L("Verbinding: MISLUKT — " + e.message);
+    setStatus("Verbinden mislukt.\n" + e.message);
+    setVerdict("err","❌ Kon niet verbinden. Scooter uit/aan en opnieuw proberen.");
+    lastReport = log.join("\n"); finish(device, log); return;
+  }
+
+  setStatus("Verbonden. Services uitlezen…");
+  let services=[];
+  try{ services = await gatt.getPrimaryServices(); }
+  catch(e){ L("Kon services niet ophalen: " + e.message); }
+
+  L(""); L("Gevonden services (die deze app mag lezen): " + services.length);
+  for(const s of services){
+    const meta = SVC.find(x=>x.uuid===s.uuid.toLowerCase());
+    L("");
+    L("• Service " + short(s.uuid) + (meta?("  — "+meta.name):""));
+    if(s.uuid.toLowerCase()===KNOWN_ONEMILE) foundKnown=true;
+    let chars=[];
+    try{ chars = await s.getCharacteristics(); }catch(e){ L("   (kon kenmerken niet lezen: "+e.message+")"); continue; }
+    for(const c of chars){
+      const u=c.uuid.toLowerCase();
+      if(u===CHAR_ONEMILE_WRITE) haveWrite=true;
+      if(u===CHAR_ONEMILE_NOTIFY) haveNotify=true;
+      L("   - kenmerk " + short(c.uuid) + "   [" + props(c) + "]");
+      if(c.properties.read){
+        try{ const v = await c.readValue();
+          L("       waarde: " + hex(v) + "  |  \"" + ascii(v) + "\"");
+          if(DIS[u]){ const t=new TextDecoder().decode(v).replace(/\0+$/,""); disText.push(DIS[u]+": "+t); }
+          if(u==="00002a19-0000-1000-8000-00805f9b34fb" && v.byteLength){ battTxt = v.getUint8(0)+"%"; }
+        }catch(e){ L("       (lezen mislukt: "+e.message+")"); }
+      }
+      if(c.properties.notify){
+        try{
+          await c.startNotifications();
+          c.addEventListener("characteristicvaluechanged", ev=>{
+            const v=ev.target.value; notifications.push(short(c.uuid)+": "+hex(v)+" | \""+ascii(v)+"\"");
+          });
+        }catch(e){ L("       (melden aanzetten mislukt: "+e.message+")"); }
+      }
+    }
+  }
+
+  // Als het bekende Onemile-protocol aanwezig is: stuur 1 veilige telemetrie-vraag (geen slot/besturing)
+  if(foundKnown && haveWrite){
+    try{
+      const svc = await gatt.getPrimaryService(KNOWN_ONEMILE);
+      const w   = await svc.getCharacteristic(CHAR_ONEMILE_WRITE);
+      const frame = Uint8Array.from([0xAA,0x01,0x04,0xAF]); // vraag-frame, geen besturing
+      setStatus("Bekend Onemile-protocol gevonden — testvraag sturen…");
+      if(w.properties.write) await w.writeValue(frame);
+      else if(w.properties.writeWithoutResponse) await w.writeValueWithoutResponse(frame);
+      L(""); L("Testvraag verstuurd: AA0104AF (alleen uitlezen, geen slot/besturing).");
+      await sleep(1500);
+    }catch(e){ L(""); L("Testvraag kon niet verstuurd worden: " + e.message); }
+  } else {
+    await sleep(1500); // even luisteren naar spontane meldingen
+  }
+
+  if(notifications.length){
+    L(""); L("Ontvangen meldingen van de scooter:");
+    notifications.slice(0,40).forEach(n=>L("   " + n));
+  }
+
+  // ---- Samenvatting + oordeel ----
+  L(""); L("--- Samenvatting ---");
+  if(disText.length){ L("Apparaat-info:"); disText.forEach(d=>L("   "+d)); }
+  if(battTxt) L("Batterij: " + battTxt);
+
+  let vKind, vText;
+  if(foundKnown && haveWrite && haveNotify){
+    vKind="ok"; vText="✅ Dit is een Onemile-scooter met het bekende protocol. Namaken kan.";
+  }else if(foundKnown){
+    vKind="warn"; vText="⚠️ Onemile-service gevonden, maar niet alle kenmerken. Zie details.";
+  }else if(services.length){
+    vKind="warn"; vText="⚠️ Verbonden, maar niet het bekende Onemile-protocol. Zie apparaat-info in het rapport.";
+  }else{
+    vKind="err"; vText="❌ Verbonden, maar geen bekende services zichtbaar. Waarschijnlijk een ander/nieuwer protocol → nRF Connect nodig.";
+  }
+  L("Oordeel: " + vText.replace(/^[^ ]+ /,""));
+  setVerdict(vKind, vText);
+  setStatus("Klaar! Tik op ‘Mail naar Jesse’ om het door te sturen.");
+
+  try{ gatt.disconnect(); }catch(_){}
+  lastReport = log.join("\n");
+  finish(device, log);
+}
+
+function finish(device, log){
+  reportEl.textContent = lastReport;
+  $("btnMail").disabled=false; $("btnDl").disabled=false;
+  // geschiedenis onthouden
+  try{
+    const hist = JSON.parse(localStorage.getItem("onemileRuns")||"[]");
+    hist.unshift({ t:Date.now(), name:device?device.name:"?", report:lastReport });
+    localStorage.setItem("onemileRuns", JSON.stringify(hist.slice(0,20)));
+    renderHist();
+  }catch(_){}
+}
+
+function renderHist(){
+  try{
+    const hist = JSON.parse(localStorage.getItem("onemileRuns")||"[]");
+    $("hist").innerHTML = "Eerdere tests op deze telefoon: " + hist.length +
+      (hist.length? "  (laatste: "+new Date(hist[0].t).toLocaleString("nl-NL")+")":"");
+  }catch(_){ $("hist").textContent=""; }
+}
+
+$("btnScan").onclick = ()=>run(false);
+$("btnAny").onclick  = ()=>run(true);
+
+$("btnDl").onclick = ()=>{
+  const blob = new Blob([lastReport], {type:"text/plain"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download="onemile-diagnose-"+new Date().toISOString().slice(0,16).replace(/[:T]/g,"-")+".txt";
+  a.click();
+};
+
+$("btnMail").onclick = ()=>{
+  const subject = "Onemile scooter diagnose ("+new Date().toLocaleDateString("nl-NL")+")";
+  // mail-body compact houden i.v.m. lengtelimiet; volledige log staat in 'Bewaar logbestand'
+  let body = lastReport;
+  if(body.length>1700){ body = body.slice(0,1700) + "\n\n…(ingekort — vraag Jesse om het volledige logbestand)"; }
+  const url = "mailto:"+encodeURIComponent(MAIL_TO)+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body);
+  location.href = url;
+};
+
+$("btnClear").onclick = ()=>{ try{ localStorage.removeItem("onemileRuns"); }catch(_){} renderHist(); };
+
+renderHist();
+</script>
+</body>
+</html>
