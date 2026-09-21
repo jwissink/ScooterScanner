@@ -144,6 +144,26 @@ const sleep = ms => new Promise(r=>setTimeout(r,ms));
 function nowT(){ const d=new Date(); const p=(n,l=2)=>String(n).padStart(l,"0");
   return p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds())+"."+p(d.getMilliseconds(),3); }
 
+// Android faalt vaak op de 1e connect -> automatisch opnieuw proberen.
+async function connectRetry(device, tries, onTry){
+  let lastErr;
+  for(let i=0;i<tries;i++){
+    try{
+      try{ if(device.gatt.connected) device.gatt.disconnect(); }catch(_){}
+      return await device.gatt.connect();
+    }catch(e){ lastErr=e; if(onTry) onTry(i+1, e); await sleep(800); }
+  }
+  throw lastErr;
+}
+async function getServiceRetry(gatt, uuid, tries){
+  let lastErr;
+  for(let i=0;i<tries;i++){
+    try{ return await gatt.getPrimaryService(uuid); }
+    catch(e){ lastErr=e; await sleep(500); }
+  }
+  throw lastErr;
+}
+
 // -------- server-side mail (met mailto-terugval) --------
 async function sendReport(text, deviceName){
   const res = await fetch("/report",{ method:"POST", headers:{"Content-Type":"application/json"},
@@ -196,14 +216,19 @@ async function capConnect(){
 
   try{
     capSet("Verbinden met "+(capDevice.name||"scooter")+"…");
-    capGatt = await capDevice.gatt.connect();
-  }catch(e){ capSet("Verbinden mislukt: "+e.message); return; }
+    capGatt = await connectRetry(capDevice, 5, (n,e)=>{
+      capSet("Verbinden lukt niet in één keer (normaal bij Android) — poging "+(n+1)+"…");
+    });
+  }catch(e){
+    capSet("❌ Verbinden mislukt na meerdere pogingen.\nProbeer dit: zet Bluetooth even uit en weer aan, of zet de scooter uit en weer aan, en tik daarna opnieuw op Verbinden.\n("+e.message+")");
+    return;
+  }
 
   let svc;
-  try{ svc = await capGatt.getPrimaryService(NUS); }
+  try{ svc = await getServiceRetry(capGatt, NUS, 4); }
   catch(e){
-    capSet("Verbonden, maar deze scooter heeft geen Nordic-UART-service. Gebruik de ‘Uitgebreide test’ onderaan en stuur dát naar Jesse.");
-    capAdd("["+nowT()+"] Geen Nordic UART gevonden op dit apparaat.");
+    capSet("Verbonden, maar de Nordic-UART-service kwam niet door. Tik nog eens op Verbinden.");
+    capAdd("["+nowT()+"] Nordic UART niet gevonden/leesbaar: "+e.message);
     enableCapButtons(true);
     return;
   }
@@ -282,7 +307,7 @@ async function run(acceptAll){
   L("Apparaat: "+(device.name||"(geen naam)")+"   id="+device.id); L("");
   let gatt, foundKnown=false, haveWrite=false, haveNotify=false, disText=[], battTxt="";
   const notifications=[];
-  try{ setStatus("Verbinden…"); gatt=await device.gatt.connect(); L("Verbinding: GELUKT."); }
+  try{ setStatus("Verbinden…"); gatt=await connectRetry(device,5,(n)=>setStatus("Verbinden — poging "+(n+1)+"…")); L("Verbinding: GELUKT."); }
   catch(e){ L("Verbinding MISLUKT: "+e.message); setStatus("Verbinden mislukt."); setVerdict("err","❌ Kon niet verbinden."); lastReport=log.join("\n"); finishDiag(device); return; }
   setStatus("Services uitlezen…");
   let services=[]; try{ services=await gatt.getPrimaryServices(); }catch(e){ L("Kon services niet ophalen: "+e.message); }
