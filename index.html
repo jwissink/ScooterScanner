@@ -162,8 +162,8 @@ function download(text, name){ const b=new Blob([text],{type:"text/plain"}); con
 async function connectRetry(device, tries, onTry){
   let lastErr;
   for(let i=0;i<tries;i++){
-    try{ try{ if(device.gatt.connected) device.gatt.disconnect(); }catch(_){} return await device.gatt.connect(); }
-    catch(e){ lastErr=e; if(onTry) onTry(i+1,e); await sleep(800); }
+    try{ try{ if(device.gatt.connected) device.gatt.disconnect(); }catch(_){} await sleep(i?1200:0); return await device.gatt.connect(); }
+    catch(e){ lastErr=e; if(onTry) onTry(i+1,e); await sleep(1200); }
   }
   throw lastErr;
 }
@@ -224,7 +224,7 @@ async function capConnect(){
   capDevice.addEventListener("gattserverdisconnected", ()=>{ clearTimeout(capNoDataTimer);
     capSet("⚠️ Verbinding verbroken. Tik opnieuw op Verbinden (of gewoon op Stuur test-verzoeken, dan verbindt hij zelf)."); capAdd("["+nowT()+"] --- verbinding verbroken ---"); });
 
-  try{ capSet("Verbinden…"); capGatt = await connectRetry(capDevice, 5, (n)=>capSet("Verbinden — poging "+(n+1)+"…")); }
+  try{ capSet("Verbinden…"); capGatt = await connectRetry(capDevice, 7, (n)=>capSet("Verbinden — poging "+(n+1)+"…")); }
   catch(e){ capSet("❌ Verbinden mislukt.\nZet Bluetooth of de scooter even uit en aan, en probeer opnieuw.\n("+e.message+")"); return; }
 
   if(!(await attachNus())){ capSet("Verbonden, maar de Nordic-UART-service kwam niet door. Tik nog eens op Verbinden."); return; }
@@ -237,7 +237,7 @@ async function ensureConnected(setMsg){
   if(capGatt && capGatt.connected && capRx) return true;
   if(!capDevice){ setMsg&&setMsg("Verbind eerst met de scooter (knop bovenaan)."); return false; }
   setMsg&&setMsg("Even (opnieuw) verbinden met de scooter…");
-  try{ capGatt = await connectRetry(capDevice, 5); }
+  try{ capGatt = await connectRetry(capDevice, 7); }
   catch(e){ setMsg&&setMsg("Verbinden mislukt: "+e.message+"\nZet Bluetooth of de scooter even uit en aan."); return false; }
   if(!(await attachNus())){ setMsg&&setMsg("Verbonden, maar geen Nordic-UART-kenmerk gevonden."); return false; }
   return true;
