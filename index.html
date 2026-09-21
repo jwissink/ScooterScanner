@@ -65,6 +65,7 @@
   <div class="card">
     <h2>🧪 Test</h2>
     <label class="chk"><input type="checkbox" id="safeStand"> De scooter staat op een standaard, wiel vrij van de grond.</label>
+    <p class="muted">Tip: de test duurt ~20 sec. <b>Draai tijdens de test het achterwiel rond of geef gas</b>, zodat de controller wakker is en antwoordt.</p>
     <button id="btnProbe">🧪  Stuur test-verzoeken</button>
     <div id="probeResult" class="status">Nog niet gestart.</div>
   </div>
@@ -245,8 +246,13 @@ async function ensureConnected(setMsg){
 async function writeRx(bytes){
   if(!capRx) throw new Error("geen RX-kenmerk");
   const buf = Uint8Array.from(bytes);
-  if(capRx.properties.writeWithoutResponse && capRx.writeValueWithoutResponse) await capRx.writeValueWithoutResponse(buf);
-  else await capRx.writeValue(buf);
+  try{
+    if(capRx.properties.writeWithoutResponse && capRx.writeValueWithoutResponse) return await capRx.writeValueWithoutResponse(buf);
+    return await capRx.writeValue(buf);
+  }catch(e){
+    if(capRx.writeValueWithResponse) return await capRx.writeValueWithResponse(buf);
+    throw e;
+  }
 }
 
 $("btnConnect").onclick = capConnect;
@@ -259,21 +265,24 @@ $("btnProbe").onclick = async ()=>{
   enableSend(true);
   const before=capCount; capFamilyHit=false;
   const frames=buildProbeList();
-  probeSet("📤 MiniRobot lees-verzoeken worden verstuurd…");
-  capAdd("["+nowT()+"] ===== START MiniRobot lees-verzoeken (alleen-lezen) =====");
-  for(let round=1; round<=2; round++){
+  capAdd("["+nowT()+"] ===== START MiniRobot lees-verzoeken (~20s, alleen-lezen) =====");
+  const tEnd=Date.now()+20000; let round=0;
+  while(Date.now()<tEnd && !capFamilyHit){
+    round++;
+    probeSet("📤 Test loopt (~20s)…\n👉 DRAAI NU HET ACHTERWIEL ROND of geef gas, zodat de controller wakker is.");
     for(const f of frames){
+      if(capFamilyHit) break;
       try{ await writeRx(f.bytes); capAdd("["+nowT()+"] TX→ ["+f.label+"] "+bhex(f.bytes)); }
       catch(e){ capAdd("["+nowT()+"] TX→ ["+f.label+"] MISLUKT: "+e.message); }
-      await sleep(700);
+      await sleep(600);
     }
   }
-  await sleep(1500);
+  await sleep(800);
   const got=capCount-before;
-  capAdd("["+nowT()+"] ===== EINDE: "+got+" antwoord(en); MiniRobot-familie: "+(capFamilyHit?"JA":"nee")+" =====");
-  if(capFamilyHit) probeSet("🎉 RAAK! De scooter antwoordt in het MiniRobot-formaat. Dit is de familie die we zoeken — stuur de test naar Jesse.");
+  capAdd("["+nowT()+"] ===== EINDE ("+round+" rondes): "+got+" antwoord(en); MiniRobot-familie: "+(capFamilyHit?"JA":"nee")+" =====");
+  if(capFamilyHit) probeSet("🎉 RAAK! De scooter antwoordt in het MiniRobot-formaat. Stuur de test naar Jesse — dit is de doorbraak.");
   else if(got>0) probeSet("✅ De scooter antwoordde ("+got+"), maar niet in MiniRobot-formaat. Stuur de test naar Jesse.");
-  else probeSet("Geen antwoord op de MiniRobot-verzoeken. Stuur de test toch naar Jesse; dan bekijk ik het.");
+  else probeSet("Nog geen antwoord. Probeer nogmaals terwijl je het achterwiel laat draaien / gas geeft. Blijft het leeg, stuur de test toch naar Jesse.");
   btn.disabled=false; btn.textContent=label;
 };
 
