@@ -107,13 +107,32 @@ const OPTIONAL = [NUS,
   "0000180a-0000-1000-8000-00805f9b34fb","0000180f-0000-1000-8000-00805f9b34fb",
   "0000ffe0-0000-1000-8000-00805f9b34fb","0000fff0-0000-1000-8000-00805f9b34fb"];
 
-// Bekende scooter-LEESframes (scooterhacking). Geen motor/rem/instelling-commando's.
-const PROBE_FRAMES = [
-  { label:"Ninebot lock-status", hex:"5A A5 01 3E 20 01 B2 01 EC FE" },
-  { label:"Ninebot unieke-ID",   hex:"5A A5 01 3E 20 01 56 02 47 FF" },
-  { label:"Xiaomi/M365 serienr", hex:"55 AA 04 20 01 10 0E BC FF" },
-  { label:"nieuwe regel",        hex:"0D 0A" },
-];
+// MiniRobot/Viron-frames (uit vr-unlock reverse-engineering). Alleen LEZEN hier.
+function miniFrame(headerB, cmd, type, addr, payload){
+  const p=payload.map(x=>x&0xff);
+  if(headerB){ // 5A A5 (Plus/miniPLUS)
+    const lenByte=p.length&0xff;
+    const body=[0x3e,cmd&0xff,type&0xff,addr&0xff,...p];
+    let sum=lenByte; for(const b of body) sum=(sum+b)&0xffff;
+    const cks=(~sum)&0xffff;
+    return [0x5A,0xA5,lenByte,...body,cks&0xff,(cks>>8)&0xff];
+  }
+  const body=[cmd&0xff,type&0xff,addr&0xff,...p];
+  const lenByte=(p.length+2)&0xff;
+  let sum=lenByte; for(const b of body) sum=(sum+b)&0xffff;
+  const cks=(~sum)&0xffff;
+  return [0x55,0xAA,lenByte,...body,cks&0xff,(cks>>8)&0xff];
+}
+function readFrame(headerB, addr){ return miniFrame(headerB, 0x06, 0x01, addr, [1]); } // cmd6 type1 = lezen
+const PROBE_REGS = [ {a:0x22,n:"snelheid"},{a:0x21,n:"accu"},{a:0xb2,n:"slot"},{a:0x7d,n:"nullstart/max"},{a:0x1f,n:"info"} ];
+function buildProbeList(){
+  const list=[];
+  for(const h of [false,true]){ // 55 AA en 5A A5
+    for(const r of PROBE_REGS){ list.push({ label:(h?"5A A5":"55 AA")+" lees "+r.n+" (0x"+r.a.toString(16)+")", bytes: readFrame(h, r.a) }); }
+  }
+  return list;
+}
+const bhex = a => a.map(b=>b.toString(16).padStart(2,"0").toUpperCase()).join(" ");
 
 const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
@@ -155,7 +174,7 @@ async function getServiceRetry(gatt, uuid, tries){
 
 /* ================= verbinding + opname ================= */
 let capGatt=null, capDevice=null, capLog=[], capCount=0, capRx=null;
-let capNoDataTimer=null, capLastHex="", capFlashTimer=null;
+let capNoDataTimer=null, capLastHex="", capFlashTimer=null, capFamilyHit=false;
 const capStatus=$("capStatus"), capCountEl=$("capCount"), capLogEl=$("capLog"), probeResEl=$("probeResult");
 function capSet(t){ capStatus.textContent=t; }
 function probeSet(t){ probeResEl.textContent=t; }
@@ -177,6 +196,8 @@ async function attachNus(){
     await tx.startNotifications();
     tx.addEventListener("characteristicvaluechanged", ev=>{
       const v=ev.target.value; capCount++; capLastHex=hex(v);
+      if(v.byteLength>=2){ const h0=v.getUint8(0),h1=v.getUint8(1);
+        if((h0===0x55&&h1===0xAA)||(h0===0x5A&&h1===0xA5)) capFamilyHit=true; }
       if(capCount===1){ clearTimeout(capNoDataTimer); capSet("✅ Er komt data binnen van de scooter."); }
       capFlash(); capUpdateCount();
       capAdd("["+nowT()+"] RX  "+hex(v)+"   | \""+ascii(v)+"\"");
@@ -236,21 +257,23 @@ $("btnProbe").onclick = async ()=>{
   if(!(await ensureConnected(probeSet))){ btn.disabled=false; btn.textContent=label; return; }
   if(!capRx){ probeSet("Deze scooter heeft geen schrijf-kenmerk; kan geen verzoeken sturen."); btn.disabled=false; btn.textContent=label; return; }
   enableSend(true);
-  const before=capCount;
-  probeSet("📤 Test-verzoeken worden verstuurd…");
-  capAdd("["+nowT()+"] ===== START test-verzoeken (alleen-lezen) =====");
+  const before=capCount; capFamilyHit=false;
+  const frames=buildProbeList();
+  probeSet("📤 MiniRobot lees-verzoeken worden verstuurd…");
+  capAdd("["+nowT()+"] ===== START MiniRobot lees-verzoeken (alleen-lezen) =====");
   for(let round=1; round<=2; round++){
-    for(const f of PROBE_FRAMES){
-      try{ await writeRx(hexToBytes(f.hex)); capAdd("["+nowT()+"] TX→ ["+f.label+"] "+f.hex); }
+    for(const f of frames){
+      try{ await writeRx(f.bytes); capAdd("["+nowT()+"] TX→ ["+f.label+"] "+bhex(f.bytes)); }
       catch(e){ capAdd("["+nowT()+"] TX→ ["+f.label+"] MISLUKT: "+e.message); }
-      await sleep(900);
+      await sleep(700);
     }
   }
-  await sleep(1200);
+  await sleep(1500);
   const got=capCount-before;
-  capAdd("["+nowT()+"] ===== EINDE: "+got+" antwoord(en) van de scooter =====");
-  if(got>0) probeSet("✅ De scooter ANTWOORDDE ("+got+" bericht(en))! Stuur de test naar Jesse — dit is de doorbraak.");
-  else probeSet("Geen antwoord op de standaard-verzoeken (waarschijnlijk een eigen protocol). Stuur de test toch naar Jesse.");
+  capAdd("["+nowT()+"] ===== EINDE: "+got+" antwoord(en); MiniRobot-familie: "+(capFamilyHit?"JA":"nee")+" =====");
+  if(capFamilyHit) probeSet("🎉 RAAK! De scooter antwoordt in het MiniRobot-formaat. Dit is de familie die we zoeken — stuur de test naar Jesse.");
+  else if(got>0) probeSet("✅ De scooter antwoordde ("+got+"), maar niet in MiniRobot-formaat. Stuur de test naar Jesse.");
+  else probeSet("Geen antwoord op de MiniRobot-verzoeken. Stuur de test toch naar Jesse; dan bekijk ik het.");
   btn.disabled=false; btn.textContent=label;
 };
 
