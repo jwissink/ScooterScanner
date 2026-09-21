@@ -14,9 +14,10 @@ verbindt). Simpele webpagina die een niet-technische gebruiker kan draaien: scoo
   **Battery** — verklapt vaak model + firmware van de scooter.
 - Als het bekende Onemile-protocol aanwezig is: stuurt één **veilig uitleеs-vraagje**
   (`AA0104AF`, géén slot/besturing) en toont het antwoord.
-- Geeft een groen/oranje/rood oordeel, **onthoudt** runs in localStorage, maakt een rapport
-  en laat de gebruiker het **mailen** (adres vooringevuld) of als **.txt** opslaan.
-- Stuurt zelf **niets** naar een server; alleen de mail die de gebruiker zelf verzendt.
+- Geeft een groen/oranje/rood oordeel, **onthoudt** runs in localStorage, en maakt een rapport.
+- **Verstuurt het rapport server-side** (`POST /report` -> lokale SMTP-relay op
+  `127.0.0.1:25` -> `REPORT_TO`), zodat de gebruiker niets met een mail-app hoeft te doen.
+  Lukt dat niet, dan valt de knop terug op een `mailto:`. Ook als **.txt** te downloaden.
 
 ## Hosting-eisen (belangrijk)
 Web Bluetooth op Android werkt **alleen**:

@@ -108,6 +108,7 @@ const DIS = {
 const $ = id => document.getElementById(id);
 const statusEl = $("status"), reportEl = $("report"), verdictBox = $("verdictBox");
 let lastReport = "";
+let lastDeviceName = "";
 
 function setStatus(t){ statusEl.textContent = t; }
 function props(c){ const p=c.properties, a=[];
@@ -254,6 +255,7 @@ async function run(acceptAll){
 
 function finish(device, log){
   reportEl.textContent = lastReport;
+  lastDeviceName = device ? (device.name || "") : "";
   $("btnMail").disabled=false; $("btnDl").disabled=false;
   // geschiedenis onthouden
   try{
@@ -283,13 +285,33 @@ $("btnDl").onclick = ()=>{
   a.click();
 };
 
-$("btnMail").onclick = ()=>{
+function mailtoFallback(){
   const subject = "Onemile scooter diagnose ("+new Date().toLocaleDateString("nl-NL")+")";
-  // mail-body compact houden i.v.m. lengtelimiet; volledige log staat in 'Bewaar logbestand'
   let body = lastReport;
   if(body.length>1700){ body = body.slice(0,1700) + "\n\n…(ingekort — vraag Jesse om het volledige logbestand)"; }
-  const url = "mailto:"+encodeURIComponent(MAIL_TO)+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body);
-  location.href = url;
+  location.href = "mailto:"+encodeURIComponent(MAIL_TO)+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body);
+}
+
+$("btnMail").onclick = async ()=>{
+  const btn = $("btnMail"); const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Versturen…";
+  try{
+    const res = await fetch("/report",{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ report:lastReport, device:lastDeviceName })
+    });
+    const j = await res.json().catch(()=>({ok:false,error:"onleesbaar antwoord"}));
+    if(res.ok && j.ok){
+      setStatus("✅ Rapport verstuurd naar Jesse. Bedankt!");
+      btn.textContent = "✓ Verstuurd"; return;
+    }
+    throw new Error(j.error || ("HTTP "+res.status));
+  }catch(e){
+    // Terugval: open de mail-app van de telefoon.
+    setStatus("Automatisch versturen lukte niet ("+e.message+").\nIk open je mail-app als terugval — tik daar op verzenden.");
+    btn.textContent = label; btn.disabled = false;
+    mailtoFallback();
+  }
 };
 
 $("btnClear").onclick = ()=>{ try{ localStorage.removeItem("onemileRuns"); }catch(_){} renderHist(); };

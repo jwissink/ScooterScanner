@@ -21,7 +21,13 @@ environments:
     # 4102 edumagix, 4103 edumagix-staging, 4104 codekompas-staging.
     http_port: 4105
 
-    # Statische pagina; heel weinig geheugen nodig, maar wel begrensd zodat de
-    # OOM-killer nooit een andere app (of de mailserver) kiest.
+    # De pagina mailt het rapport server-side via de lokale SMTP-relay. Afzender
+    # op ludolabsdev.eu (heeft SPF/DKIM); ontvanger is Jesse.
+    mail_from_email: "noreply@ludolabsdev.eu"
+    env:
+      REPORT_TO: "jwissink@gmail.com"
+
+    # Statische pagina + kleine mailer; weinig geheugen nodig, maar wel begrensd
+    # zodat de OOM-killer nooit een andere app (of de mailserver) kiest.
     memory_high: "96M"
     memory_max: "128M"
